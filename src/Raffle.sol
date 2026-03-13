@@ -15,6 +15,15 @@ import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/V
 contract Raffle is VRFConsumerBaseV2Plus {
     //Errors
     error Raffle__SendMoreToEnterRaffle();
+    error Raffle__TransferFailed();
+    error Raffle_RaffleNotOpen();
+
+
+    //Type Declarations
+    enum RaffleState{
+        OPEN,
+        CALCULATING
+    }
 
     //State Varibales
     uint16 private constant REQUEST_CONFIRMATIONS = 3;
@@ -26,6 +35,10 @@ contract Raffle is VRFConsumerBaseV2Plus {
     uint32 private immutable i_CallbackGasLimit;
     address payable[] private s_players;
     uint256 private s_lastTimeStamp;
+    address private s_recentWinner;
+    RaffleState private s_raffleState;
+
+    
 
     //Events
     event RaffleEntered(address indexed player);
@@ -44,12 +57,18 @@ contract Raffle is VRFConsumerBaseV2Plus {
         i_keyHash = gasLane;
         i_subscriptionId = subscriptionId;
         i_CallbackGasLimit = CallbackGasLimit;
+        s_raffleState = RaffleState.OPEN;
     }
 
     function enterRaffle() external payable {
         //require(msg.value >= i_entranceFee, SendMoreToEnterRaffle());
         if (msg.value < i_entranceFee) {
             revert Raffle__SendMoreToEnterRaffle();
+        }
+
+        if(s_raffleState!=RaffleState.OPEN)
+        {
+            revert Raffle_RaffleNotOpen();
         }
 
         s_players.push(payable(msg.sender));
@@ -60,6 +79,8 @@ contract Raffle is VRFConsumerBaseV2Plus {
         if (block.timestamp - s_lastTimeStamp > i_interval) {
             revert();
         }
+
+        s_raffleState = RaffleState.CALCULATING;
 
         uint256 requestId = s_vrfCoordinator.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
@@ -80,5 +101,16 @@ contract Raffle is VRFConsumerBaseV2Plus {
         return i_entranceFee;
     }
 
-    function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal virtual override {}
+    function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal virtual override {
+        uint256 indexOfWinner = randomWords[0] % s_players.length;
+        address payable recentWinner = s_players[indexOfWinner];
+        s_recentWinner = recentWinner;
+        s_raffleState = RaffleState.OPEN;
+        (bool success,) =s_recentWinner.call{value: address(this).balance}("");
+        if(!success)
+        {
+            revert Raffle__SendMoreToEnterRaffle();
+        }
+
+    }
 }
